@@ -52,7 +52,11 @@ communicate with Emacs. Run the install script from the cloned repo:
 .\install.ps1 -ExtensionId <extension-id>
 ```
 
-Restart your browser after running the script.
+### 4. Restart the browser
+
+After restarting the browser, clicking on the extension icon or using the context menu should open the current page or link in eww.
+
+Optionally, you may want to associate a keyboard shortcut (e.g. `Ctrl+e` or `⌘+e`) to the "Open in eww" command in `chrome://extensions/shortcuts` for even quicker access.
 
 ## How it works
 
