@@ -2,7 +2,7 @@
 
 A Chrome/Chromium extension that opens the current page or a link in
 [Emacs eww](https://www.gnu.org/software/emacs/manual/html_mono/eww.html),
-the built-in Emacs web browser.
+the built-in Emacs web “wowser” [*sic*].
 
 ## Features
 
@@ -22,7 +22,7 @@ the built-in Emacs web browser.
 1. Open `chrome://extensions`
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked** and select the `extension/` directory
-4. Copy the extension ID shown under the extension name
+4. Copy the extension ID shown under the extension name (e.g. `lfjhkmagojnhjmfdlfbefcmebodlfcce`)
 
 ### 2. Install the native messaging host
 
