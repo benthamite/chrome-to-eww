@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Open in eww",
+  "version": "1.0",
+  "description": "Open the current page or a link in Emacs eww browser",
+  "permissions": ["activeTab", "contextMenus", "nativeMessaging"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open in eww"
+  }
+}
