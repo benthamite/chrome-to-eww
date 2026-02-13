@@ -1,9 +1,34 @@
 #!/usr/bin/env python3
 """Native messaging host that opens URLs in Emacs eww."""
 import json
+import os
+import shutil
 import struct
 import subprocess
 import sys
+
+_emacsclient = None
+
+
+def find_emacsclient():
+    global _emacsclient
+    if _emacsclient is not None:
+        return _emacsclient
+    candidates = [
+        "/opt/homebrew/bin/emacsclient",
+        "/usr/local/bin/emacsclient",
+        "/usr/bin/emacsclient",
+        "/snap/bin/emacsclient",
+    ]
+    for path in candidates:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            _emacsclient = path
+            return _emacsclient
+    found = shutil.which("emacsclient")
+    if found:
+        _emacsclient = found
+        return _emacsclient
+    return None
 
 
 def read_message():
@@ -26,19 +51,20 @@ def main():
     if not message or "url" not in message:
         send_message({"error": "No URL provided"})
         return
+    emacsclient = find_emacsclient()
+    if not emacsclient:
+        send_message({"error": "emacsclient not found"})
+        return
     url = message["url"].replace("\\", "\\\\").replace('"', '\\"')
     elisp = f'(progn (eww "{url}") (raise-frame))'
-    try:
-        result = subprocess.run(
-            ["/opt/homebrew/bin/emacsclient", "-e", elisp],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            send_message({"success": True})
-        else:
-            send_message({"error": result.stderr.decode()})
-    except FileNotFoundError:
-        send_message({"error": "emacsclient not found"})
+    result = subprocess.run(
+        [emacsclient, "-e", elisp],
+        capture_output=True,
+    )
+    if result.returncode == 0:
+        send_message({"success": True})
+    else:
+        send_message({"error": result.stderr.decode()})
 
 
 if __name__ == "__main__":

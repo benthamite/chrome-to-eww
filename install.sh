@@ -2,7 +2,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-HOST_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
 HOST_NAME="com.emacs.eww"
 LOCAL_BIN="$HOME/.local/bin"
 
@@ -25,9 +24,38 @@ EXTENSION_ID="$1"
 mkdir -p "$LOCAL_BIN"
 cp "$SCRIPT_DIR/open-in-eww-host" "$LOCAL_BIN/open-in-eww-host"
 chmod +x "$LOCAL_BIN/open-in-eww-host"
+echo "Installed script: $LOCAL_BIN/open-in-eww-host"
 
-mkdir -p "$HOST_DIR"
-cat > "$HOST_DIR/$HOST_NAME.json" <<EOF
+# Detect OS and define candidate manifest directories.
+case "$(uname -s)" in
+    Darwin)
+        declare -A browsers=(
+            [Chrome]="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
+            [Chromium]="$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
+        )
+        ;;
+    Linux)
+        declare -A browsers=(
+            [Chrome]="$HOME/.config/google-chrome/NativeMessagingHosts"
+            [Chromium]="$HOME/.config/chromium/NativeMessagingHosts"
+        )
+        ;;
+    *)
+        echo "Unsupported OS: $(uname -s)" >&2
+        exit 1
+        ;;
+esac
+
+# Install manifest for each browser whose parent directory exists.
+installed=0
+for browser in "${!browsers[@]}"; do
+    host_dir="${browsers[$browser]}"
+    parent_dir="$(dirname "$host_dir")"
+    if [ ! -d "$parent_dir" ]; then
+        continue
+    fi
+    mkdir -p "$host_dir"
+    cat > "$host_dir/$HOST_NAME.json" <<EOF
 {
   "name": "$HOST_NAME",
   "description": "Open URLs in Emacs eww browser",
@@ -38,9 +66,14 @@ cat > "$HOST_DIR/$HOST_NAME.json" <<EOF
   ]
 }
 EOF
+    echo "Installed manifest: $host_dir/$HOST_NAME.json ($browser)"
+    installed=$((installed + 1))
+done
 
-echo "Installed native messaging host."
-echo "  Manifest: $HOST_DIR/$HOST_NAME.json"
-echo "  Script:   $LOCAL_BIN/open-in-eww-host"
+if [ "$installed" -eq 0 ]; then
+    echo "No supported browsers found" >&2
+    exit 1
+fi
+
 echo ""
-echo "Restart Chrome for changes to take effect."
+echo "Restart your browser for changes to take effect."
