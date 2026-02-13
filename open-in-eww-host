@@ -14,12 +14,19 @@ def find_emacsclient():
     global _emacsclient
     if _emacsclient is not None:
         return _emacsclient
-    candidates = [
-        "/opt/homebrew/bin/emacsclient",
-        "/usr/local/bin/emacsclient",
-        "/usr/bin/emacsclient",
-        "/snap/bin/emacsclient",
-    ]
+    if sys.platform == "win32":
+        candidates = [
+            os.path.expandvars(r"%ProgramFiles%\Emacs\bin\emacsclient.exe"),
+            os.path.expandvars(r"%ProgramFiles(x86)%\Emacs\bin\emacsclient.exe"),
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Emacs\bin\emacsclient.exe"),
+        ]
+    else:
+        candidates = [
+            "/opt/homebrew/bin/emacsclient",
+            "/usr/local/bin/emacsclient",
+            "/usr/bin/emacsclient",
+            "/snap/bin/emacsclient",
+        ]
     for path in candidates:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             _emacsclient = path
@@ -56,7 +63,12 @@ def main():
         send_message({"error": "emacsclient not found"})
         return
     url = message["url"].replace("\\", "\\\\").replace('"', '\\"')
-    elisp = f'(progn (eww "{url}") (raise-frame))'
+    elisp = (
+        f'(progn (eww "{url}")'
+        ' (select-frame-set-input-focus (selected-frame))'
+        ' (when (fboundp \'ns-do-applescript)'
+        '  (ns-do-applescript "tell application \\"Emacs\\" to activate")))'
+    )
     result = subprocess.run(
         [emacsclient, "-e", elisp],
         capture_output=True,

@@ -26,11 +26,19 @@ the built-in Emacs web browser.
 
 ### 2. Install the native messaging host
 
+**macOS / Linux:**
+
 ```bash
 ./install.sh <extension-id>
 ```
 
-This copies the host script to `~/.local/bin/` and registers it with
+**Windows** (PowerShell):
+
+```powershell
+.\install.ps1 -ExtensionId <extension-id>
+```
+
+This copies the host script to a local directory and registers it with
 Chrome and/or Chromium. Restart your browser after running the script.
 
 ## How it works
@@ -43,5 +51,6 @@ automatically detects the location of `emacsclient` on your system.
 
 - macOS (Homebrew ARM and Intel)
 - Linux
+- Windows
 
 Both Chrome and Chromium are supported.

@@ -26,33 +26,14 @@ cp "$SCRIPT_DIR/open-in-eww-host" "$LOCAL_BIN/open-in-eww-host"
 chmod +x "$LOCAL_BIN/open-in-eww-host"
 echo "Installed script: $LOCAL_BIN/open-in-eww-host"
 
-# Detect OS and define candidate manifest directories.
-case "$(uname -s)" in
-    Darwin)
-        declare -A browsers=(
-            [Chrome]="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
-            [Chromium]="$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
-        )
-        ;;
-    Linux)
-        declare -A browsers=(
-            [Chrome]="$HOME/.config/google-chrome/NativeMessagingHosts"
-            [Chromium]="$HOME/.config/chromium/NativeMessagingHosts"
-        )
-        ;;
-    *)
-        echo "Unsupported OS: $(uname -s)" >&2
-        exit 1
-        ;;
-esac
-
-# Install manifest for each browser whose parent directory exists.
+# Install manifest for a browser if its parent directory exists.
 installed=0
-for browser in "${!browsers[@]}"; do
-    host_dir="${browsers[$browser]}"
+install_manifest() {
+    local browser="$1" host_dir="$2"
+    local parent_dir
     parent_dir="$(dirname "$host_dir")"
     if [ ! -d "$parent_dir" ]; then
-        continue
+        return
     fi
     mkdir -p "$host_dir"
     cat > "$host_dir/$HOST_NAME.json" <<EOF
@@ -68,7 +49,22 @@ for browser in "${!browsers[@]}"; do
 EOF
     echo "Installed manifest: $host_dir/$HOST_NAME.json ($browser)"
     installed=$((installed + 1))
-done
+}
+
+case "$(uname -s)" in
+    Darwin)
+        install_manifest Chrome "$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
+        install_manifest Chromium "$HOME/Library/Application Support/Chromium/NativeMessagingHosts"
+        ;;
+    Linux)
+        install_manifest Chrome "$HOME/.config/google-chrome/NativeMessagingHosts"
+        install_manifest Chromium "$HOME/.config/chromium/NativeMessagingHosts"
+        ;;
+    *)
+        echo "Unsupported OS: $(uname -s)" >&2
+        exit 1
+        ;;
+esac
 
 if [ "$installed" -eq 0 ]; then
     echo "No supported browsers found" >&2
