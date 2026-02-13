@@ -4,6 +4,8 @@ A Chrome/Chromium extension that opens the current page or a link in
 [Emacs eww](https://www.gnu.org/software/emacs/manual/html_mono/eww.html),
 the built-in Emacs Web "Wowser" [*sic*].
 
+![Video screenshot showing seamless navigation between Chrome and EWW](screenshot.gif)
+
 ## Features
 
 - **Toolbar button** — click the extension icon to open the current tab in eww
