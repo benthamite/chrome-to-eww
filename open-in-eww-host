@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
-"""Native messaging host that opens URLs in Emacs eww."""
+"""Native messaging host for the Emacs Chrome bridge."""
 import json
 import os
 import shutil
+import socket
+import stat
 import struct
 import subprocess
 import sys
+import tempfile
+import threading
+from urllib.parse import urlparse
+
+MAX_NATIVE_MESSAGE = 64 * 1024 * 1024
+MAX_SOCKET_REQUEST = 1024 * 1024
+ALLOWED_HOSTS = {
+    "annas-archive.gl",
+    "annas-archive.pk",
+    "annas-archive.gd",
+}
 
 _emacsclient = None
+_pending = {}
+_pending_lock = threading.Lock()
+_stdout_lock = threading.Lock()
 
 
 def find_emacsclient():
+    """Return the first available emacsclient executable."""
     global _emacsclient
     if _emacsclient is not None:
         return _emacsclient
@@ -31,52 +48,235 @@ def find_emacsclient():
         if os.path.isfile(path) and os.access(path, os.X_OK):
             _emacsclient = path
             return _emacsclient
-    found = shutil.which("emacsclient")
-    if found:
-        _emacsclient = found
-        return _emacsclient
-    return None
+    _emacsclient = shutil.which("emacsclient")
+    return _emacsclient
 
 
-def read_message():
+def socket_path():
+    """Return the private Unix-domain socket used by Emacs clients."""
+    directory = os.path.join(tempfile.gettempdir(), f"chrome-to-eww-{os.getuid()}")
+    try:
+        os.mkdir(directory, 0o700)
+    except FileExistsError:
+        info = os.lstat(directory)
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            raise RuntimeError("Chrome bridge runtime directory is not private")
+    return os.path.join(directory, "bridge.sock")
+
+
+def read_native_message():
+    """Read one Chrome native-messaging frame from standard input."""
     raw_length = sys.stdin.buffer.read(4)
     if len(raw_length) < 4:
         return None
     length = struct.unpack("<I", raw_length)[0]
-    return json.loads(sys.stdin.buffer.read(length))
+    if length > MAX_NATIVE_MESSAGE:
+        raise ValueError("Native message exceeds the size limit")
+    payload = sys.stdin.buffer.read(length)
+    if len(payload) != length:
+        raise EOFError("Incomplete native message")
+    return json.loads(payload)
 
 
-def send_message(message):
-    encoded = json.dumps(message).encode("utf-8")
-    sys.stdout.buffer.write(struct.pack("<I", len(encoded)))
-    sys.stdout.buffer.write(encoded)
-    sys.stdout.buffer.flush()
+def send_native_message(message):
+    """Write one Chrome native-messaging frame to standard output."""
+    encoded = json.dumps(message, separators=(",", ":")).encode("utf-8")
+    with _stdout_lock:
+        sys.stdout.buffer.write(struct.pack("<I", len(encoded)))
+        sys.stdout.buffer.write(encoded)
+        sys.stdout.buffer.flush()
+
+
+def valid_search_request(message):
+    """Return whether MESSAGE is an allowed bridge search request."""
+    request_id = message.get("id")
+    timeout = message.get("timeout")
+    if (
+        message.get("action") != "fetch"
+        or not isinstance(request_id, str)
+        or not 1 <= len(request_id.encode("utf-8")) <= 128
+        or not isinstance(timeout, (int, float))
+        or not 1000 <= timeout <= 45000
+    ):
+        return False
+    parsed = urlparse(message.get("url", ""))
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname in ALLOWED_HOSTS
+        and parsed.path == "/search"
+    )
+
+
+def send_socket_response(client, message):
+    """Send MESSAGE to CLIENT and close the connection."""
+    try:
+        client.sendall(json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n")
+    except OSError:
+        pass
+    finally:
+        client.close()
+
+
+def handle_socket_client(client):
+    """Forward one private socket request from CLIENT to Chrome."""
+    try:
+        request = client.makefile("rb").readline(MAX_SOCKET_REQUEST + 1)
+        if len(request) > MAX_SOCKET_REQUEST:
+            raise ValueError("Request exceeds the size limit")
+        message = json.loads(request)
+        if not valid_search_request(message):
+            raise ValueError("Only Anna's Archive HTTPS search URLs are allowed")
+        with _pending_lock:
+            if message["id"] in _pending:
+                raise ValueError("Duplicate request id")
+            _pending[message["id"]] = client
+        try:
+            send_native_message(message)
+        except Exception:
+            with _pending_lock:
+                if _pending.get(message["id"]) is client:
+                    _pending.pop(message["id"], None)
+            raise
+    except Exception as error:
+        send_socket_response(
+            client,
+            {"outcome": "error", "message": str(error)},
+        )
+
+
+def create_socket_server():
+    """Create and return the private bridge socket server and its path."""
+    path = socket_path()
+    if os.path.exists(path):
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.connect(path)
+        except OSError:
+            os.unlink(path)
+        else:
+            raise RuntimeError("Another Chrome bridge is already running")
+        finally:
+            probe.close()
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(path)
+    os.chmod(path, 0o600)
+    server.listen()
+    return server, path
+
+
+def serve_socket(server, path):
+    """Accept private Emacs bridge requests from SERVER at PATH."""
+    try:
+        while True:
+            client, _ = server.accept()
+            threading.Thread(
+                target=handle_socket_client,
+                args=(client,),
+                daemon=True,
+            ).start()
+    finally:
+        server.close()
+        if os.path.exists(path):
+            os.unlink(path)
+
+
+def open_in_eww(url):
+    """Open URL in eww as an explicit extension toolbar action."""
+    emacsclient = find_emacsclient()
+    if not emacsclient:
+        return {"action": "open_eww_result", "error": "emacsclient not found"}
+    escaped = url.replace("\\", "\\\\").replace('"', '\\"')
+    elisp = (
+        f'(progn (eww "{escaped}")'
+        " (select-frame-set-input-focus (selected-frame))"
+        " (when (fboundp 'ns-do-applescript)"
+        '  (ns-do-applescript "tell application \\"Emacs\\" to activate")))'
+    )
+    try:
+        result = subprocess.run(
+            [emacsclient, "-e", elisp],
+            capture_output=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return {"action": "open_eww_result", "error": "emacsclient timed out"}
+    if result.returncode == 0:
+        return {"action": "open_eww_result", "success": True}
+    return {
+        "action": "open_eww_result",
+        "error": result.stderr.decode(errors="replace"),
+    }
+
+
+def handle_native_message(message):
+    """Dispatch MESSAGE received from the extension."""
+    if message.get("action") == "open_eww":
+        threading.Thread(
+            target=lambda: send_native_message(open_in_eww(message.get("url", ""))),
+            daemon=True,
+        ).start()
+        return
+    request_id = message.get("id")
+    if not request_id:
+        return
+    valid_outcomes = {"success", "empty", "transient", "malformed"}
+    valid_response = (
+        message.get("action") == "fetch_result"
+        and message.get("outcome") in valid_outcomes
+    )
+    if message.get("outcome") in {"success", "empty"}:
+        valid_response = (
+            valid_response
+            and isinstance(message.get("html"), str)
+            and valid_search_request(
+                {
+                    "action": "fetch",
+                    "id": request_id,
+                    "url": message.get("url", ""),
+                    "timeout": 1000,
+                }
+            )
+        )
+    with _pending_lock:
+        client = _pending.pop(request_id, None)
+    if client:
+        send_socket_response(
+            client,
+            message if valid_response else {
+                "id": request_id,
+                "outcome": "error",
+                "message": "Invalid response from Chrome extension",
+            },
+        )
 
 
 def main():
-    message = read_message()
-    if not message or "url" not in message:
-        send_message({"error": "No URL provided"})
-        return
-    emacsclient = find_emacsclient()
-    if not emacsclient:
-        send_message({"error": "emacsclient not found"})
-        return
-    url = message["url"].replace("\\", "\\\\").replace('"', '\\"')
-    elisp = (
-        f'(progn (eww "{url}")'
-        ' (select-frame-set-input-focus (selected-frame))'
-        ' (when (fboundp \'ns-do-applescript)'
-        '  (ns-do-applescript "tell application \\"Emacs\\" to activate")))'
-    )
-    result = subprocess.run(
-        [emacsclient, "-e", elisp],
-        capture_output=True,
-    )
-    if result.returncode == 0:
-        send_message({"success": True})
+    """Run the persistent Chrome native-messaging bridge."""
+    if sys.platform == "win32":
+        server = path = None
     else:
-        send_message({"error": result.stderr.decode()})
+        server, path = create_socket_server()
+        threading.Thread(target=serve_socket, args=(server, path), daemon=True).start()
+    try:
+        while True:
+            message = read_native_message()
+            if message is None:
+                return
+            handle_native_message(message)
+    finally:
+        with _pending_lock:
+            pending = list(_pending.values())
+            _pending.clear()
+        for client in pending:
+            send_socket_response(
+                client,
+                {"outcome": "transient", "message": "Chrome bridge disconnected"},
+            )
 
 
 if __name__ == "__main__":

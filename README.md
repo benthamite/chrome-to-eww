@@ -1,8 +1,9 @@
-# Open in eww
+# Chrome to Emacs bridge
 
-A Chrome/Chromium extension that opens the current page or a link in
-[Emacs eww](https://www.gnu.org/software/emacs/manual/html_mono/eww.html),
-the built-in Emacs Web "Wowser" [*sic*].
+A Chrome/Chromium extension that connects Chrome to Emacs. It opens the current
+page or a link in [Emacs eww](https://www.gnu.org/software/emacs/manual/html_mono/eww.html),
+the built-in Emacs Web "Wowser" [*sic*], and provides a private background-page
+bridge for compatible Emacs packages.
 
 ![Video screenshot showing seamless navigation between Chrome and EWW](screenshot.gif)
 
@@ -10,6 +11,8 @@ the built-in Emacs Web "Wowser" [*sic*].
 
 - **Toolbar button** — click the extension icon to open the current tab in eww
 - **Context menu** — right-click a link or page to open it in eww
+- **Background bridge** — compatible Emacs packages can load an approved URL in
+  an inactive tab, read its final DOM, and close only that tab
 
 ## Requirements
 
@@ -62,6 +65,10 @@ Optionally, you may want to associate a keyboard shortcut (e.g. `Ctrl+e` or `⌘
 
 ## How it works
 
-The extension sends the URL to a native messaging host — a small
-Python script that calls `emacsclient` to open it in eww. The host
-automatically detects the location of `emacsclient` on your system.
+The extension keeps a Chrome native-messaging connection to a small local Python
+host. Toolbar and context-menu actions call `emacsclient` to open a URL in eww.
+The host also exposes an owner-only Unix-domain socket for approved Emacs
+clients. Background requests create tabs with `active: false`; the extension
+never focuses a window or selects another tab. The bridge currently accepts only
+Anna's Archive search URLs. The background bridge is available on macOS and
+Linux; toolbar and context-menu actions also work on Windows.
