@@ -1,14 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Open in eww",
-  "version": "1.1",
-  "description": "Connect Emacs to Chrome and open pages in eww",
-  "permissions": ["activeTab", "contextMenus", "nativeMessaging", "scripting"],
-  "host_permissions": [
-    "https://annas-archive.gl/*",
-    "https://annas-archive.pk/*",
-    "https://annas-archive.gd/*"
-  ],
+  "version": "1.0",
+  "description": "Open the current page or a link in Emacs eww browser",
+  "permissions": ["activeTab", "contextMenus", "nativeMessaging"],
   "background": {
     "service_worker": "background.js"
   },
